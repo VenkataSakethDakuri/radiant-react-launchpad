@@ -1,48 +1,40 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 
 type AuthMode = "login" | "signup" | "forgot";
 
-export default function Auth() {
+const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<AuthMode>("login");
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     try {
-      if (mode === "login") {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-        navigate("/");
-      } else if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (error) throw error;
-        toast({
-          title: "Success!",
-          description: "Please check your email to verify your account.",
-        });
-      } else if (mode === "forgot") {
+      if (mode === "forgot") {
         const { error } = await supabase.auth.resetPasswordForEmail(email);
         if (error) throw error;
         toast({
-          title: "Success!",
-          description: "Please check your email for password reset instructions.",
+          title: "Check your email",
+          description: "We've sent you a password reset link.",
         });
+      } else {
+        const { error } = mode === "login"
+          ? await supabase.auth.signInWithPassword({ email, password })
+          : await supabase.auth.signUp({ email, password });
+        
+        if (error) throw error;
+
+        if (mode === "signup") {
+          toast({
+            title: "Check your email",
+            description: "We've sent you a confirmation link.",
+          });
+        }
       }
     } catch (error) {
       toast({
@@ -50,104 +42,64 @@ export default function Auth() {
         title: "Error",
         description: error instanceof Error ? error.message : "An error occurred",
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold">
-            {mode === "login"
-              ? "Sign in to your account"
-              : mode === "signup"
-              ? "Create a new account"
-              : "Reset your password"}
-          </h2>
-        </div>
-
-        <form onSubmit={handleAuth} className="space-y-6">
-          <div>
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="w-full max-w-md p-8 space-y-6 bg-card rounded-lg shadow-lg">
+        <h2 className="text-3xl font-bold text-center">
+          {mode === "login" ? "Welcome back" : mode === "signup" ? "Create account" : "Reset password"}
+        </h2>
+        <form onSubmit={handleAuth} className="space-y-4">
+          <Input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          {mode !== "forgot" && (
             <Input
-              type="email"
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               required
             />
-          </div>
-
-          {mode !== "forgot" && (
-            <div>
-              <Input
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required={mode !== "forgot"}
-                minLength={6}
-              />
-            </div>
           )}
-
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={loading}
-          >
-            {loading
-              ? "Loading..."
-              : mode === "login"
-              ? "Sign in"
-              : mode === "signup"
-              ? "Sign up"
-              : "Reset password"}
+          <Button type="submit" className="w-full">
+            {mode === "login" ? "Sign in" : mode === "signup" ? "Sign up" : "Send reset link"}
           </Button>
         </form>
-
-        <div className="space-y-4">
-          {mode === "login" && (
+        <div className="flex justify-center gap-4 text-sm">
+          {mode === "login" ? (
             <>
-              <Button
-                variant="ghost"
-                className="w-full"
+              <button
                 onClick={() => setMode("signup")}
+                className="text-primary hover:underline"
               >
-                Don't have an account? Sign up
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full"
+                Create account
+              </button>
+              <button
                 onClick={() => setMode("forgot")}
+                className="text-primary hover:underline"
               >
-                Forgot your password?
-              </Button>
+                Forgot password?
+              </button>
             </>
-          )}
-
-          {mode === "signup" && (
-            <Button
-              variant="ghost"
-              className="w-full"
+          ) : (
+            <button
               onClick={() => setMode("login")}
+              className="text-primary hover:underline"
             >
-              Already have an account? Sign in
-            </Button>
-          )}
-
-          {mode === "forgot" && (
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={() => setMode("login")}
-            >
-              Back to sign in
-            </Button>
+              Back to login
+            </button>
           )}
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Auth;
