@@ -3,6 +3,7 @@ import { Features } from "@/components/Features";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
+import { Chat } from "@/components/Chat";
 
 const Index = () => {
   const { toast } = useToast();
@@ -28,6 +29,9 @@ const Index = () => {
         </Button>
       </div>
       <Hero />
+      <div className="container mx-auto px-4 py-8">
+        <Chat />
+      </div>
       <Features />
     </main>
   );
