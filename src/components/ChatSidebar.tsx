@@ -13,11 +13,9 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import type { Database } from "@/integrations/supabase/types";
 
-type Chat = {
-  id: string;
-  created_at: string;
-}
+type Chat = Database['public']['Tables']['conversations']['Row'];
 
 export function ChatSidebar() {
   const { toast } = useToast();
@@ -26,12 +24,17 @@ export function ChatSidebar() {
   const { data: chats } = useQuery({
     queryKey: ['chats'],
     queryFn: async () => {
+      console.log('Fetching chats...');
       const { data, error } = await supabase
         .from('conversations')
-        .select('id, created_at')
+        .select('id, created_at, title')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching chats:', error);
+        throw error;
+      }
+      console.log('Fetched chats:', data);
       return data as Chat[];
     }
   });
@@ -40,6 +43,7 @@ export function ChatSidebar() {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      navigate('/auth');
     } catch (error) {
       toast({
         variant: "destructive",
@@ -65,7 +69,7 @@ export function ChatSidebar() {
           {chats?.map((chat) => (
             <SidebarMenuItem key={chat.id}>
               <SidebarMenuButton>
-                Chat from {new Date(chat.created_at).toLocaleDateString()}
+                {chat.title} - {new Date(chat.created_at).toLocaleDateString()}
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
