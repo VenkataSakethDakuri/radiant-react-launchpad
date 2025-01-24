@@ -13,7 +13,7 @@ serve(async (req) => {
   }
 
   try {
-    const { userInput, userId } = await req.json();
+    const { userInput, userId, chatId } = await req.json();
     
     // Initialize Supabase client
     const supabaseClient = createClient(
@@ -21,18 +21,17 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Fetch previous conversations
-    const { data: previousConversations } = await supabaseClient
+    // Verify chat belongs to user
+    const { data: chat, error: chatError } = await supabaseClient
       .from('conversations')
-      .select('user_input, bot_response')
+      .select('id')
+      .eq('id', chatId)
       .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(5);
+      .single();
 
-    // Create context from previous conversations
-    const conversationHistory = previousConversations?.map(conv => 
-      `User: ${conv.user_input}\nAssistant: ${conv.bot_response}`
-    ).join('\n') || '';
+    if (chatError || !chat) {
+      throw new Error('Invalid chat ID');
+    }
 
     // Generate AI response
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -42,15 +41,11 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4',
         messages: [
           { 
             role: 'system', 
-            content: 'You are a helpful AI journaling assistant. Use previous conversations to personalize responses and help users reflect on their thoughts and feelings.'
-          },
-          { 
-            role: 'system', 
-            content: `Previous conversations:\n${conversationHistory}`
+            content: 'You are a helpful AI journaling assistant. Help users reflect on their thoughts and feelings.'
           },
           { role: 'user', content: userInput }
         ],
@@ -59,15 +54,6 @@ serve(async (req) => {
 
     const data = await response.json();
     const botResponse = data.choices[0].message.content;
-
-    // Store conversation in database
-    await supabaseClient
-      .from('conversations')
-      .insert({
-        user_id: userId,
-        user_input: userInput,
-        bot_response: botResponse,
-      });
 
     return new Response(JSON.stringify({ botResponse }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

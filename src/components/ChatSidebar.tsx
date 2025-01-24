@@ -21,7 +21,7 @@ export function ChatSidebar() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const { data: chats } = useQuery({
+  const { data: chats, refetch: refetchChats } = useQuery({
     queryKey: ['chats'],
     queryFn: async () => {
       console.log('Fetching chats...');
@@ -39,6 +39,34 @@ export function ChatSidebar() {
     }
   });
 
+  const handleNewChat = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('No user found');
+
+      const { data: chat, error } = await supabase
+        .from('conversations')
+        .insert({
+          user_id: user.id,
+          title: 'New Chat'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      refetchChats();
+      navigate(`/?chat=${chat.id}`);
+    } catch (error) {
+      console.error('Error creating new chat:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create new chat",
+      });
+    }
+  };
+
   const handleLogout = async () => {
     try {
       const { error } = await supabase.auth.signOut();
@@ -53,12 +81,16 @@ export function ChatSidebar() {
     }
   };
 
+  const handleChatSelect = (chatId: string) => {
+    navigate(`/?chat=${chatId}`);
+  };
+
   return (
     <Sidebar>
       <SidebarHeader className="p-4">
         <Button 
           className="w-full flex items-center gap-2" 
-          onClick={() => navigate("/")}
+          onClick={handleNewChat}
         >
           <Plus className="h-4 w-4" />
           New Chat
@@ -68,7 +100,7 @@ export function ChatSidebar() {
         <SidebarMenu>
           {chats?.map((chat) => (
             <SidebarMenuItem key={chat.id}>
-              <SidebarMenuButton>
+              <SidebarMenuButton onClick={() => handleChatSelect(chat.id)}>
                 {chat.title} - {new Date(chat.created_at).toLocaleDateString()}
               </SidebarMenuButton>
             </SidebarMenuItem>

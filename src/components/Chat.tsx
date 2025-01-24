@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Mic, Send, StopCircle, Volume2 } from "lucide-react";
+import { Mic, Send, StopCircle } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Chat = () => {
+  const [searchParams] = useSearchParams();
+  const chatId = searchParams.get('chat');
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -54,6 +57,15 @@ export const Chat = () => {
   };
 
   const handleStopRecording = async () => {
+    if (!chatId) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please create a new chat first",
+      });
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const base64Audio = await stopRecording();
@@ -72,7 +84,7 @@ export const Chat = () => {
       
       // Get AI response
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
-        body: { userInput, userId: user?.id },
+        body: { userInput, userId: user?.id, chatId },
       });
 
       if (chatError) throw chatError;
@@ -102,6 +114,15 @@ export const Chat = () => {
   };
 
   const handleSendMessage = async () => {
+    if (!chatId) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please create a new chat first",
+      });
+      return;
+    }
+
     if (!inputText.trim()) return;
     
     setIsProcessing(true);
@@ -111,7 +132,7 @@ export const Chat = () => {
       
       // Get AI response
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
-        body: { userInput: inputText, userId: user?.id },
+        body: { userInput: inputText, userId: user?.id, chatId },
       });
 
       if (chatError) throw chatError;
