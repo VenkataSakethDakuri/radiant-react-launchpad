@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,16 +7,12 @@ import { MessageList } from "./chat/MessageList";
 import { MessageInput } from "./chat/MessageInput";
 import { VoiceRecorder } from "./chat/VoiceRecorder";
 import { EmptyState } from "./chat/EmptyState";
-
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-};
+import { fetchMessages, sendMessage } from "@/utils/chatUtils";
+import type { Message } from "@/types/chat";
 
 export const Chat = () => {
   const [searchParams] = useSearchParams();
   const chatId = searchParams.get('chat');
-  const [messages, setMessages] = useState<Message[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -24,36 +20,56 @@ export const Chat = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
 
-  const { data: chatMessages, refetch: refetchMessages } = useQuery({
+  const { data: messages = [], refetch: refetchMessages } = useQuery({
     queryKey: ['messages', chatId],
-    queryFn: async () => {
-      if (!chatId) return [];
-      console.log('Fetching messages for chat:', chatId);
-      
-      const { data: messages, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', chatId)
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        console.error('Error fetching messages:', error);
-        throw error;
-      }
-
-      return messages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
-    },
+    queryFn: () => chatId ? fetchMessages(chatId) : Promise.resolve([]),
     enabled: !!chatId
   });
 
-  useEffect(() => {
-    if (chatMessages) {
-      setMessages(chatMessages);
+  const handleSendMessage = async () => {
+    if (!chatId || !inputText.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please create a new chat first",
+      });
+      return;
     }
-  }, [chatMessages]);
+
+    setIsProcessing(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("User not authenticated");
+
+      const botResponse = await sendMessage(chatId, inputText, user.id);
+      
+      // Play audio response with optimized settings
+      const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
+        body: { 
+          text: botResponse,
+          speed: 1.3, // Increase speed slightly
+          model: 'tts-1-hd' // Use higher quality model
+        },
+      });
+
+      if (voiceError) throw voiceError;
+
+      const audio = new Audio(`data:audio/mp3;base64,${voiceData.audioContent}`);
+      await audio.play();
+
+      setInputText("");
+      refetchMessages();
+    } catch (error) {
+      console.error('Error in text chat:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error instanceof Error ? error.message : "An error occurred",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const startRecording = async () => {
     try {
@@ -167,81 +183,15 @@ export const Chat = () => {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!chatId) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Please create a new chat first",
-      });
-      return;
-    }
-
-    if (!inputText.trim()) return;
-    
-    setIsProcessing(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      // Save user message
-      await supabase
-        .from('messages')
-        .insert({
-          conversation_id: chatId,
-          role: 'user',
-          content: inputText
-        });
-      
-      // Get AI response
-      const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
-        body: { userInput: inputText, userId: user?.id, chatId },
-      });
-
-      if (chatError) throw chatError;
-
-      // Save assistant message
-      await supabase
-        .from('messages')
-        .insert({
-          conversation_id: chatId,
-          role: 'assistant',
-          content: chatData.botResponse
-        });
-      
-      // Convert response to speech
-      const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
-        body: { text: chatData.botResponse },
-      });
-
-      if (voiceError) throw voiceError;
-
-      // Play audio response
-      const audio = new Audio(`data:audio/mp3;base64,${voiceData.audioContent}`);
-      await audio.play();
-
-      setInputText("");
-      refetchMessages();
-    } catch (error) {
-      console.error('Error in text chat:', error);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error instanceof Error ? error.message : "An error occurred",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   if (!chatId) {
     return <EmptyState />;
   }
 
   return (
-    <div className="flex flex-col h-[600px] w-full max-w-2xl mx-auto bg-background border rounded-lg shadow-sm">
+    <div className="flex flex-col h-[600px] w-full max-w-4xl mx-auto bg-background border rounded-lg shadow-sm">
       <MessageList messages={messages} />
       <div className="border-t p-4">
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full">
           <MessageInput
             inputText={inputText}
             setInputText={setInputText}

@@ -17,7 +17,7 @@ export const MessageInput = ({
   isRecording,
 }: MessageInputProps) => {
   return (
-    <div className="flex gap-2">
+    <div className="flex-1 flex gap-2">
       <input
         type="text"
         value={inputText}
@@ -25,6 +25,12 @@ export const MessageInput = ({
         placeholder="Type your message..."
         className="flex-1 min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={isProcessing || isRecording}
+        onKeyPress={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+          }
+        }}
       />
       <Button
         onClick={handleSendMessage}
