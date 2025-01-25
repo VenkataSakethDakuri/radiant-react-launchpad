@@ -13,6 +13,7 @@ serve(async (req) => {
   }
 
   try {
+    console.log('Received chat request');
     const { userInput, userId, chatId } = await req.json();
     
     // Initialize Supabase client
@@ -33,7 +34,30 @@ serve(async (req) => {
       throw new Error('Invalid chat ID');
     }
 
-    // Generate AI response
+    // Fetch previous messages for context
+    console.log('Fetching chat history');
+    const { data: messages, error: messagesError } = await supabaseClient
+      .from('messages')
+      .select('role, content')
+      .eq('conversation_id', chatId)
+      .order('created_at', { ascending: true })
+      .limit(10); // Limit to last 10 messages for context
+
+    if (messagesError) {
+      throw messagesError;
+    }
+
+    // Format messages for OpenAI
+    const messageHistory = messages?.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    })) || [];
+
+    // Add current user message
+    messageHistory.push({ role: 'user', content: userInput });
+
+    // Generate AI response with context
+    console.log('Making request to OpenAI API');
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -41,19 +65,36 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           { 
             role: 'system', 
-            content: 'You are a helpful AI journaling assistant. Help users reflect on their thoughts and feelings.'
+            content: 'You are a helpful AI journaling assistant. Help users reflect on their thoughts and feelings. Use previous context to provide more personalized and relevant responses. Keep responses concise but meaningful.'
           },
-          { role: 'user', content: userInput }
+          ...messageHistory
         ],
+        max_tokens: 150, // Limit response length for faster processing
+        temperature: 0.7,
+        presence_penalty: 0.6, // Encourage the model to talk about new topics
+        frequency_penalty: 0.6, // Reduce repetition
       }),
     });
 
     const data = await response.json();
     const botResponse = data.choices[0].message.content;
+
+    // Store the assistant's response
+    const { error: insertError } = await supabaseClient
+      .from('messages')
+      .insert({
+        conversation_id: chatId,
+        role: 'assistant',
+        content: botResponse
+      });
+
+    if (insertError) {
+      throw insertError;
+    }
 
     return new Response(JSON.stringify({ botResponse }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

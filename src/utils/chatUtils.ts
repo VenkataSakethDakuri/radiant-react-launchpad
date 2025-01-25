@@ -21,40 +21,40 @@ export const fetchMessages = async (chatId: string) => {
 };
 
 export const sendMessage = async (chatId: string, content: string, userId: string) => {
+  console.log('Sending message:', { chatId, content });
+  
   // Save user message
-  await supabase
+  const { error: userMessageError } = await supabase
     .from('messages')
     .insert({
       conversation_id: chatId,
       role: 'user',
       content: content
     });
+
+  if (userMessageError) throw userMessageError;
   
   // Get AI response with optimized settings
   const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
     body: { 
       userInput: content, 
       userId, 
-      chatId,
-      settings: {
-        temperature: 0.7,
-        max_tokens: 150, // Limit response length for faster processing
-        presence_penalty: 0.6,
-        frequency_penalty: 0.6
-      }
+      chatId
     },
   });
 
   if (chatError) throw chatError;
 
-  // Save assistant message
-  await supabase
-    .from('messages')
-    .insert({
-      conversation_id: chatId,
-      role: 'assistant',
-      content: chatData.botResponse
-    });
+  // Convert response to speech with optimized settings
+  const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
+    body: { 
+      text: chatData.botResponse,
+      speed: 1.3, // Faster speech
+      model: 'tts-1' // Use standard model for better performance
+    },
+  });
+
+  if (voiceError) throw voiceError;
 
   return chatData.botResponse;
 };
