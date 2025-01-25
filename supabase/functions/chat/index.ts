@@ -34,29 +34,34 @@ serve(async (req) => {
       throw new Error('Invalid chat ID');
     }
 
-    // Fetch previous messages for context
-    console.log('Fetching chat history');
-    const { data: messages, error: messagesError } = await supabaseClient
+    // Fetch all user's messages across all conversations for context
+    console.log('Fetching user chat history across all conversations');
+    const { data: allMessages, error: allMessagesError } = await supabaseClient
       .from('messages')
-      .select('role, content')
-      .eq('conversation_id', chatId)
+      .select('role, content, conversation_id')
+      .in('conversation_id', (
+        await supabaseClient
+          .from('conversations')
+          .select('id')
+          .eq('user_id', userId)
+      ).data?.map(c => c.id) || [])
       .order('created_at', { ascending: true })
-      .limit(10); // Limit to last 10 messages for context
+      .limit(20); // Limit to last 20 messages for broader context
 
-    if (messagesError) {
-      throw messagesError;
+    if (allMessagesError) {
+      throw allMessagesError;
     }
 
-    // Format messages for OpenAI
-    const messageHistory = messages?.map(msg => ({
+    // Format messages for OpenAI, including conversation context
+    const messageHistory = allMessages?.map(msg => ({
       role: msg.role,
-      content: msg.content
+      content: `${msg.content}${msg.conversation_id === chatId ? ' (current conversation)' : ' (from previous conversation)'}`
     })) || [];
 
     // Add current user message
     messageHistory.push({ role: 'user', content: userInput });
 
-    // Generate AI response with context
+    // Generate AI response with enhanced context
     console.log('Making request to OpenAI API');
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -69,14 +74,14 @@ serve(async (req) => {
         messages: [
           { 
             role: 'system', 
-            content: 'You are a helpful AI journaling assistant. Help users reflect on their thoughts and feelings. Use previous context to provide more personalized and relevant responses. Keep responses concise but meaningful.'
+            content: 'You are a helpful AI journaling assistant. Help users reflect on their thoughts and feelings. Use context from all previous conversations to provide highly personalized and relevant responses. When referencing previous conversations, be natural and conversational. Keep responses concise but meaningful.'
           },
           ...messageHistory
         ],
-        max_tokens: 150, // Limit response length for faster processing
+        max_tokens: 150,
         temperature: 0.7,
-        presence_penalty: 0.6, // Encourage the model to talk about new topics
-        frequency_penalty: 0.6, // Reduce repetition
+        presence_penalty: 0.6,
+        frequency_penalty: 0.6,
       }),
     });
 
@@ -100,7 +105,7 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error in chat function:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
