@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Mic, Send, StopCircle } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
+import { MessageList } from "./chat/MessageList";
+import { MessageInput } from "./chat/MessageInput";
+import { VoiceRecorder } from "./chat/VoiceRecorder";
+import { EmptyState } from "./chat/EmptyState";
 
 type Message = {
   role: "user" | "assistant";
@@ -22,26 +24,27 @@ export const Chat = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
 
-  // Fetch messages for the current chat
   const { data: chatMessages, refetch: refetchMessages } = useQuery({
     queryKey: ['messages', chatId],
     queryFn: async () => {
       if (!chatId) return [];
       console.log('Fetching messages for chat:', chatId);
       
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: chat, error: chatError } = await supabase
-        .from('conversations')
-        .select('user_id')
-        .eq('id', chatId)
-        .single();
+      const { data: messages, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', chatId)
+        .order('created_at', { ascending: true });
 
-      if (chatError || !chat || chat.user_id !== user?.id) {
-        console.error('Error fetching chat:', chatError);
-        return [];
+      if (error) {
+        console.error('Error fetching messages:', error);
+        throw error;
       }
 
-      return messages;
+      return messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
     },
     enabled: !!chatId
   });
@@ -107,7 +110,7 @@ export const Chat = () => {
       const base64Audio = await stopRecording();
       const { data: { user } } = await supabase.auth.getUser();
       
-      // Convert speech to text with smaller chunks
+      // Convert speech to text
       const { data: speechData, error: speechError } = await supabase.functions.invoke("speech-to-text", {
         body: { audio: base64Audio },
       });
@@ -116,19 +119,31 @@ export const Chat = () => {
       
       // Send message to chat
       const userInput = speechData.text;
-      const newMessages = [...messages, { role: "user", content: userInput }];
-      setMessages(newMessages);
-      
-      // Get AI response with streaming
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: chatId,
+          role: 'user',
+          content: userInput
+        });
+
+      // Get AI response
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
         body: { userInput, userId: user?.id, chatId },
       });
 
       if (chatError) throw chatError;
 
-      setMessages([...newMessages, { role: "assistant", content: chatData.botResponse }]);
-      
-      // Convert response to speech with optimized processing
+      // Save assistant message
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: chatId,
+          role: 'assistant',
+          content: chatData.botResponse
+        });
+
+      // Convert response to speech
       const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
         body: { text: chatData.botResponse },
       });
@@ -167,8 +182,15 @@ export const Chat = () => {
     setIsProcessing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const newMessages = [...messages, { role: "user", content: inputText }];
-      setMessages(newMessages);
+      
+      // Save user message
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: chatId,
+          role: 'user',
+          content: inputText
+        });
       
       // Get AI response
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
@@ -177,9 +199,16 @@ export const Chat = () => {
 
       if (chatError) throw chatError;
 
-      setMessages([...newMessages, { role: "assistant", content: chatData.botResponse }]);
+      // Save assistant message
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: chatId,
+          role: 'assistant',
+          content: chatData.botResponse
+        });
       
-      // Convert response to speech with optimized chunks
+      // Convert response to speech
       const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
         body: { text: chatData.botResponse },
       });
@@ -205,62 +234,27 @@ export const Chat = () => {
   };
 
   if (!chatId) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[600px] w-full max-w-2xl mx-auto">
-        <p className="text-lg text-muted-foreground">Select a chat from the sidebar or create a new one to start</p>
-      </div>
-    );
+    return <EmptyState />;
   }
 
   return (
     <div className="flex flex-col h-[600px] w-full max-w-2xl mx-auto bg-background border rounded-lg shadow-sm">
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={`flex ${
-              message.role === "user" ? "justify-end" : "justify-start"
-            }`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg p-3 ${
-                message.role === "user"
-                  ? "bg-primary text-primary-foreground ml-4"
-                  : "bg-muted mr-4"
-              }`}
-            >
-              {message.content}
-            </div>
-          </div>
-        ))}
-      </div>
+      <MessageList messages={messages} />
       <div className="border-t p-4">
         <div className="flex gap-2">
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={isProcessing || isRecording}
+          <MessageInput
+            inputText={inputText}
+            setInputText={setInputText}
+            handleSendMessage={handleSendMessage}
+            isProcessing={isProcessing}
+            isRecording={isRecording}
           />
-          <Button
-            onClick={handleSendMessage}
-            disabled={isProcessing || isRecording || !inputText.trim()}
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={isRecording ? "destructive" : "secondary"}
-            onClick={isRecording ? handleStopRecording : startRecording}
-            disabled={isProcessing}
-          >
-            {isRecording ? (
-              <StopCircle className="h-4 w-4" />
-            ) : (
-              <Mic className="h-4 w-4" />
-            )}
-          </Button>
+          <VoiceRecorder
+            isRecording={isRecording}
+            isProcessing={isProcessing}
+            onStartRecording={startRecording}
+            onStopRecording={handleStopRecording}
+          />
         </div>
       </div>
     </div>

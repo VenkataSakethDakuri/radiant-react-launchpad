@@ -1,4 +1,4 @@
-import { Plus, LogOut } from "lucide-react";
+import { Plus, LogOut, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -11,6 +11,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuAction,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import type { Database } from "@/integrations/supabase/types";
@@ -67,6 +68,32 @@ export function ChatSidebar() {
     }
   };
 
+  const handleDeleteChat = async (chatId: string) => {
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', chatId);
+
+      if (error) throw error;
+
+      refetchChats();
+      navigate('/');
+      
+      toast({
+        title: "Success",
+        description: "Chat deleted successfully",
+      });
+    } catch (error) {
+      console.error('Error deleting chat:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete chat",
+      });
+    }
+  };
+
   const handleLogout = async () => {
     try {
       const { error } = await supabase.auth.signOut();
@@ -103,6 +130,14 @@ export function ChatSidebar() {
               <SidebarMenuButton onClick={() => handleChatSelect(chat.id)}>
                 {chat.title} - {new Date(chat.created_at).toLocaleDateString()}
               </SidebarMenuButton>
+              <SidebarMenuAction
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteChat(chat.id);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </SidebarMenuAction>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
