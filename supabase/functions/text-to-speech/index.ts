@@ -14,16 +14,19 @@ serve(async (req) => {
 
   try {
     console.log('Received text-to-speech request');
-    const { text } = await req.json();
+    const { text, speed = 1.2, model = 'tts-1' } = await req.json();
 
     if (!text) {
       throw new Error('Text is required');
     }
 
-    // Optimize text length for faster processing
-    const optimizedText = text.length > 500 ? text.slice(0, 500) + '...' : text;
+    // Limit text length to prevent stack overflow
+    const maxLength = 4096; // OpenAI's recommended max length
+    const truncatedText = text.length > maxLength 
+      ? text.slice(0, maxLength) + '...' 
+      : text;
 
-    console.log('Making request to OpenAI API');
+    console.log('Making request to OpenAI API with text length:', truncatedText.length);
     const response = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
@@ -31,11 +34,11 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'tts-1',
-        input: optimizedText,
+        model,
+        input: truncatedText,
         voice: 'alloy',
         response_format: 'mp3',
-        speed: 1.2, // Slightly faster speech
+        speed,
       }),
     });
 
@@ -51,8 +54,15 @@ serve(async (req) => {
     
     // Convert to base64 more efficiently using a typed array
     const uint8Array = new Uint8Array(arrayBuffer);
-    const base64Audio = btoa(String.fromCharCode.apply(null, uint8Array));
+    let base64Audio = '';
+    const chunkSize = 32768; // Process in chunks to prevent stack overflow
     
+    for (let i = 0; i < uint8Array.length; i += chunkSize) {
+      const chunk = uint8Array.slice(i, i + chunkSize);
+      base64Audio += String.fromCharCode.apply(null, chunk);
+    }
+    
+    base64Audio = btoa(base64Audio);
     console.log('Successfully converted audio to base64');
 
     return new Response(
