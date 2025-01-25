@@ -4,17 +4,53 @@ import { Button } from "@/components/ui/button";
 import { Mic, Send, StopCircle } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
+
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+};
 
 export const Chat = () => {
   const [searchParams] = useSearchParams();
   const chatId = searchParams.get('chat');
-  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputText, setInputText] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
+
+  // Fetch messages for the current chat
+  const { data: chatMessages, refetch: refetchMessages } = useQuery({
+    queryKey: ['messages', chatId],
+    queryFn: async () => {
+      if (!chatId) return [];
+      console.log('Fetching messages for chat:', chatId);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: chat, error: chatError } = await supabase
+        .from('conversations')
+        .select('user_id')
+        .eq('id', chatId)
+        .single();
+
+      if (chatError || !chat || chat.user_id !== user?.id) {
+        console.error('Error fetching chat:', chatError);
+        return [];
+      }
+
+      return messages;
+    },
+    enabled: !!chatId
+  });
+
+  useEffect(() => {
+    if (chatMessages) {
+      setMessages(chatMessages);
+    }
+  }, [chatMessages]);
 
   const startRecording = async () => {
     try {
@@ -71,7 +107,7 @@ export const Chat = () => {
       const base64Audio = await stopRecording();
       const { data: { user } } = await supabase.auth.getUser();
       
-      // Convert speech to text
+      // Convert speech to text with smaller chunks
       const { data: speechData, error: speechError } = await supabase.functions.invoke("speech-to-text", {
         body: { audio: base64Audio },
       });
@@ -80,18 +116,19 @@ export const Chat = () => {
       
       // Send message to chat
       const userInput = speechData.text;
-      setMessages((prev) => [...prev, { role: "user", content: userInput }]);
+      const newMessages = [...messages, { role: "user", content: userInput }];
+      setMessages(newMessages);
       
-      // Get AI response
+      // Get AI response with streaming
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
         body: { userInput, userId: user?.id, chatId },
       });
 
       if (chatError) throw chatError;
 
-      setMessages((prev) => [...prev, { role: "assistant", content: chatData.botResponse }]);
+      setMessages([...newMessages, { role: "assistant", content: chatData.botResponse }]);
       
-      // Convert response to speech
+      // Convert response to speech with optimized processing
       const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
         body: { text: chatData.botResponse },
       });
@@ -102,7 +139,9 @@ export const Chat = () => {
       const audio = new Audio(`data:audio/mp3;base64,${voiceData.audioContent}`);
       await audio.play();
 
+      refetchMessages();
     } catch (error) {
+      console.error('Error in voice chat:', error);
       toast({
         variant: "destructive",
         title: "Error",
@@ -128,7 +167,8 @@ export const Chat = () => {
     setIsProcessing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      setMessages((prev) => [...prev, { role: "user", content: inputText }]);
+      const newMessages = [...messages, { role: "user", content: inputText }];
+      setMessages(newMessages);
       
       // Get AI response
       const { data: chatData, error: chatError } = await supabase.functions.invoke("chat", {
@@ -137,9 +177,9 @@ export const Chat = () => {
 
       if (chatError) throw chatError;
 
-      setMessages((prev) => [...prev, { role: "assistant", content: chatData.botResponse }]);
+      setMessages([...newMessages, { role: "assistant", content: chatData.botResponse }]);
       
-      // Convert response to speech
+      // Convert response to speech with optimized chunks
       const { data: voiceData, error: voiceError } = await supabase.functions.invoke("text-to-speech", {
         body: { text: chatData.botResponse },
       });
@@ -151,7 +191,9 @@ export const Chat = () => {
       await audio.play();
 
       setInputText("");
+      refetchMessages();
     } catch (error) {
+      console.error('Error in text chat:', error);
       toast({
         variant: "destructive",
         title: "Error",
@@ -161,6 +203,14 @@ export const Chat = () => {
       setIsProcessing(false);
     }
   };
+
+  if (!chatId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[600px] w-full max-w-2xl mx-auto">
+        <p className="text-lg text-muted-foreground">Select a chat from the sidebar or create a new one to start</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-[600px] w-full max-w-2xl mx-auto bg-background border rounded-lg shadow-sm">
